@@ -1,0 +1,23 @@
+{
+  "name": "browser-game-server",
+  "version": "1.0.0",
+  "description": "WebSocket server for 1v1 browser game",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js"
+  },
+  "keywords": [
+    "websocket",
+    "game",
+    "multiplayer"
+  ],
+  "author": "Your Name",
+  "license": "MIT",
+  "dependencies": {
+    "ws": "^8.13.0"
+  },
+  "devDependencies": {
+    "nodemon": "^2.0.20"
+  }
+}

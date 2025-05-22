@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Браузерная игра (1x1)</title>
+  <style>
+    body { font-family: Arial; text-align: center; }
+    button { padding: 10px; margin: 5px; }
+    #roomId { padding: 8px; width: 100px; }
+    .battle-ui { 
+      display: none; 
+      margin-top: 20px;
+      padding: 20px;
+      border: 1px solid #ccc;
+      border-radius: 5px;
+    }
+    .battle-ui.active { 
+      display: block; 
+    }
+    .battle-section {
+      margin: 15px 0;
+      padding: 10px;
+      background: #f5f5f5;
+      border-radius: 5px;
+    }
+    .health-bar {
+      margin: 10px 0;
+      padding: 5px;
+      background: #eee;
+      border-radius: 3px;
+    }
+    .health-value {
+      height: 20px;
+      background: #4CAF50;
+      transition: width 0.3s;
+      border-radius: 3px;
+      text-align: left;
+      padding-left: 5px;
+      color: white;
+    }
+    #battleLog {
+      margin: 20px auto;
+      width: 80%;
+      max-width: 600px;
+      height: 300px;
+      border: 1px solid #ccc;
+      overflow-y: auto;
+      text-align: left;
+      padding: 10px;
+      background: #f9f9f9;
+      font-family: monospace;
+      font-size: 14px;
+    }
+    .log-entry {
+      margin: 3px 0;
+      padding: 3px 5px;
+      border-radius: 3px;
+    }
+    .log-entry.damage {
+      color: #d32f2f;
+      background: rgba(211, 47, 47, 0.1);
+    }
+    .log-entry.block {
+      color: #388e3c;
+      background: rgba(56, 142, 60, 0.1);
+    }
+    .log-entry.system {
+      color: #1976d2;
+      font-weight: bold;
+    }
+  </style>
+</head>
+<body>
+  <h1>Лобби для дуэлей</h1>
+  
+  <div>
+    <input id="playerName" placeholder="Ваше имя" style="padding: 8px; margin-bottom: 10px;">
+  </div>
+
+  <div>
+    <button onclick="createRoom()">Создать комнату (1x1)</button>
+  </div>
+
+  <div>
+    <input id="roomId" placeholder="ID комнаты">
+    <button onclick="joinRoom()">Присоединиться</button>
+  </div>
+
+  <div id="roomStatus">Не в комнате</div>
+  <div id="players"></div>
+
+  <div id="battleUI" class="battle-ui">
+    <div id="healthBars">
+      <div class="health-bar">
+        Ваше здоровье: <div id="myHealth" class="health-value" style="width: 100%;">100</div>
+      </div>
+      <div class="health-bar">
+        Здоровье противника: <div id="enemyHealth" class="health-value" style="width: 100%;">100</div>
+      </div>
+    </div>
+
+    <div class="battle-section">
+      <h3>Защита</h3>
+      <div>
+        <input type="radio" name="defense" value="HEAD" id="defHead"><label for="defHead">Голова</label>
+        <input type="radio" name="defense" value="BODY" id="defBody"><label for="defBody">Корпус</label>
+        <input type="radio" name="defense" value="WAIST" id="defWaist"><label for="defWaist">Пояс</label>
+        <input type="radio" name="defense" value="LEGS" id="defLegs"><label for="defLegs">Ноги</label>
+      </div>
+    </div>
+
+    <div class="battle-section">
+      <h3>Атака</h3>
+      <div>
+        <input type="radio" name="attack" value="HEAD" id="attHead"><label for="attHead">Голова</label>
+        <input type="radio" name="attack" value="BODY" id="attBody"><label for="attBody">Корпус</label>
+        <input type="radio" name="attack" value="WAIST" id="attWaist"><label for="attWaist">Пояс</label>
+        <input type="radio" name="attack" value="LEGS" id="attLegs"><label for="attLegs">Ноги</label>
+      </div>
+    </div>
+
+    <button onclick="makeMove()" id="attackButton">Атаковать</button>
+    <div id="battleStatus"></div>
+
+    <div id="battleLog"></div>
+  </div>
+
+  <script>
+    const socket = new WebSocket('ws://localhost:8080');
+    let currentRoomId = null;
+    let myHealth = 100;
+    let enemyHealth = 100;
+    let canMove = true;
+
+    // Добавление записи в лог
+    function addLogEntry(message, type = '') {
+      const log = document.getElementById('battleLog');
+      const entry = document.createElement('div');
+      entry.className = `log-entry ${type}`;
+      entry.textContent = message;
+      log.appendChild(entry);
+      log.scrollTop = log.scrollHeight;
+    }
+
+    // Обработка входящих сообщений
+    socket.addEventListener('message', (event) => {
+      const data = JSON.parse(event.data);
+      console.log('Сервер:', data);
+
+      switch (data.type) {
+        case 'welcome':
+          console.log(data.message);
+          break;
+
+        case 'room_created':
+          currentRoomId = data.roomId;
+          document.getElementById('roomStatus').textContent = `Комната: ${data.roomId}`;
+          addLogEntry(`Комната ${data.roomId} создана`, 'system');
+          break;
+
+        case 'room_state':
+          updatePlayersList(data.players);
+          if (data.players.length === 2) {
+            document.getElementById('battleUI').classList.add('active');
+            addLogEntry('Бой начинается!', 'system');
+          }
+          break;
+
+        case 'battle_update':
+          handleBattleUpdate(data);
+          break;
+
+        case 'game_over':
+          handleGameOver(data);
+          break;
+
+        case 'battle_log':
+          addLogEntry(data.message, data.logType || '');
+          break;
+      }
+    });
+
+    function handleBattleUpdate(data) {
+      const { myNewHealth, enemyNewHealth, message, details } = data;
+      myHealth = myNewHealth;
+      enemyHealth = enemyNewHealth;
+      
+      updateHealthBars();
+      document.getElementById('battleStatus').textContent = message;
+      
+      if (details) {
+        details.forEach(detail => {
+          addLogEntry(detail.message, detail.type);
+        });
+      }
+
+      canMove = true;
+      document.getElementById('attackButton').disabled = false;
+    }
+
+    function handleGameOver(data) {
+      document.getElementById('battleStatus').textContent = data.message;
+      document.getElementById('attackButton').disabled = true;
+      addLogEntry(data.message, 'system');
+    }
+
+    function updateHealthBars() {
+      document.getElementById('myHealth').style.width = `${myHealth}%`;
+      document.getElementById('myHealth').textContent = myHealth;
+      document.getElementById('enemyHealth').style.width = `${enemyHealth}%`;
+      document.getElementById('enemyHealth').textContent = enemyHealth;
+    }
+
+    function makeMove() {
+      const defense = document.querySelector('input[name="defense"]:checked');
+      const attack = document.querySelector('input[name="attack"]:checked');
+
+      if (!defense || !attack) {
+        alert('Выберите зону защиты и атаки!');
+        return;
+      }
+
+      socket.send(JSON.stringify({
+        type: 'make_move',
+        defense: defense.value,
+        attack: attack.value
+      }));
+
+      addLogEntry(`Вы выбрали: атака - ${ATTACK_ZONES[attack.value]}, защита - ${ATTACK_ZONES[defense.value]}`, 'system');
+      canMove = false;
+      document.getElementById('attackButton').disabled = true;
+      document.getElementById('battleStatus').textContent = 'Ожидание хода противника...';
+    }
+
+    const ATTACK_ZONES = {
+      HEAD: 'Голова',
+      BODY: 'Корпус',
+      WAIST: 'Пояс',
+      LEGS: 'Ноги'
+    };
+
+    // Создать комнату
+    function createRoom() {
+      const playerName = document.getElementById('playerName').value || 'Игрок';
+      socket.send(JSON.stringify({ 
+        type: 'create_room', 
+        mode: '1x1',
+        playerName: playerName 
+      }));
+    }
+
+    // Присоединиться к комнате
+    function joinRoom() {
+      const roomId = document.getElementById('roomId').value;
+      const playerName = document.getElementById('playerName').value || 'Игрок';
+      socket.send(JSON.stringify({ 
+        type: 'join_room', 
+        roomId,
+        playerName: playerName 
+      }));
+    }
+
+    // Обновить список игроков
+    function updatePlayersList(players) {
+      const list = players.map(p => `${p.name} (${p.side})`).join('<br>');
+      document.getElementById('players').innerHTML = list;
+    }
+  </script>
+</body>
+</html>
